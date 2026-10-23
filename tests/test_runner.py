@@ -526,3 +526,104 @@ async def test_runner_rejects_cross_branch_handoff_to_registered_agent() -> None
     with pytest.raises(AgentHandoffError):
         runner._resolve_handoff_target(sales, "AdminAgent")
     assert runner._resolve_handoff_target(support, "AdminAgent") is admin
+
+
+def test_runner_duplicate_agent_names_at_construction_raises() -> None:
+    """Issue #123: Two distinct agent instances with the same name must raise ValueError."""
+    billing_support = Agent(name="Support", instructions="BILLING support")
+    tech_support = Agent(name="Support", instructions="TECH support")
+    billing_desk = Agent(name="Billing desk", instructions="billing", handoffs=[billing_support])
+    tech_desk = Agent(name="Tech desk", instructions="tech", handoffs=[tech_support])
+    root = Agent(name="Root", instructions="root", handoffs=[billing_desk, tech_desk])
+
+    with pytest.raises(ValueError, match="Support"):
+        Runner(root)
+
+
+def test_runner_shared_agent_instance_in_dag_allowed() -> None:
+    """Issue #123: The same agent instance reachable from several branches (a DAG) works."""
+    shared_support = Agent(name="Support", instructions="Shared support")
+    billing_desk = Agent(name="Billing desk", instructions="billing", handoffs=[shared_support])
+    tech_desk = Agent(name="Tech desk", instructions="tech", handoffs=[shared_support])
+    root = Agent(name="Root", instructions="root", handoffs=[billing_desk, tech_desk])
+
+    runner = Runner(root)
+    assert runner._agents_registry["Support"] is shared_support
+
+
+def test_runner_conflicting_register_agent_raises() -> None:
+    """Issue #123: register_agent() with a conflicting name raises; same instance is no-op."""
+    root = Agent(name="Root", instructions="root")
+    runner = Runner(root)
+
+    # Same instance is a no-op
+    runner.register_agent(root)
+    assert runner._agents_registry["Root"] is root
+
+    # Conflicting instance raises ValueError
+    conflicting_root = Agent(name="Root", instructions="another root")
+    with pytest.raises(ValueError, match="Root"):
+        runner.register_agent(conflicting_root)
+
+
+@pytest.mark.asyncio
+async def test_runner_late_add_handoff_replacement_and_conflict() -> None:
+    """Issue #123: Late add_handoff() replaces peer, updates registry, and rejects if still reachable."""
+    old_support = Agent(name="Support", instructions="OLD support")
+    desk = Agent(name="Desk", instructions="desk", handoffs=[old_support])
+    runner = Runner(desk)
+    assert runner._agents_registry["Support"] is old_support
+
+    # Late replacement when old_support is no longer reachable elsewhere
+    new_support = Agent(name="Support", instructions="NEW support")
+    desk.add_handoff(new_support)
+
+    resolved = runner._resolve_handoff_target(desk, "Support")
+    assert resolved is new_support
+    assert runner._agents_registry["Support"] is new_support
+
+    # If old agent is still reachable from another branch, conflict is reported
+    desk1 = Agent(name="Desk1", instructions="desk1", handoffs=[old_support])
+    desk2 = Agent(name="Desk2", instructions="desk2", handoffs=[old_support])
+    root = Agent(name="Root", instructions="root", handoffs=[desk1, desk2])
+    branch_runner = Runner(root)
+
+    # desk1 replaces old_support, but desk2 still reaches old_support
+    desk1.add_handoff(new_support)
+    with pytest.raises(ValueError, match="Support"):
+        branch_runner._resolve_handoff_target(desk1, "Support")
+
+
+@pytest.mark.asyncio
+async def test_runner_existing_sqlite_session_resolves_replaced_active_agent(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """Issue #123: An existing SQLite session resolves active agent to replaced peer."""
+    from chatflow_agent.core.memory import SQLiteSessionStore
+
+    db_file = tmp_path / "test_session_replace.db"  # type: ignore[operator]
+    store = SQLiteSessionStore(db_path=str(db_file))
+
+    old_agent = Agent(name="Assistant", instructions="Original version")
+    root = Agent(name="Root", instructions="Root", handoffs=[old_agent])
+    runner = Runner(starting_agent=root, session_store=store)
+
+    session = runner.get_session("test_sess")
+    session = store.get_or_create("test_sess", default_agent=root)
+    session.set_active_agent(old_agent)
+    assert session.active_agent is old_agent
+
+    # Replaced late
+    new_agent = Agent(name="Assistant", instructions="Upgraded version")
+    root.add_handoff(new_agent)
+
+    # Resolution updates registry
+    resolved = runner._resolve_handoff_target(root, "Assistant")
+    assert resolved is new_agent
+
+    # New context / refresh resolves name to new_agent
+    session2 = store.get("test_sess")
+    assert session2 is not None
+    assert session2.active_agent.instructions == "Upgraded version"
+    store.close()
+

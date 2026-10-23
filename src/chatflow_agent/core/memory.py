@@ -36,10 +36,8 @@ class SessionContext:
         max_turns: int = 40,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        if max_turns<=0:
-            raise ValueError(
-                f"max_turns must be positive,got {max_turns}"
-            )
+        if max_turns <= 0:
+            raise ValueError(f"max_turns must be positive, got {max_turns}")
         self.session_id = session_id
         self.active_agent = initial_agent
         self.max_turns = max_turns
@@ -212,8 +210,8 @@ class SessionStore(BaseSessionStore):
         import time as _time
         if default_max_turns <= 0:
             raise ValueError(
-        f"default_max_turns must be a positive integer, got {default_max_turns}"
-    )
+                f"default_max_turns must be a positive integer, got {default_max_turns}"
+            )
         self._sessions: dict[str, SessionContext] = {}
         self.default_max_turns = default_max_turns
         self.dedup_ttl_hours = dedup_ttl_hours

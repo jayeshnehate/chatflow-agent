@@ -105,24 +105,50 @@ class Runner:
 
         # Registry of all known agents (starting agent + all transitive handoffs)
         self._agents_registry: dict[str, Agent] = {}
+        self._explicit_roots: list[Agent] = [self.starting_agent]
         self._registry_lock = threading.Lock()
         self._register_agent_tree(self.starting_agent)
 
         if hasattr(self.session_store, "set_agent_resolver"):
             self.session_store.set_agent_resolver(lambda name: self._agents_registry.get(name))
 
+    def _get_reachable_agents(self) -> set[Agent]:
+        """Return all unique Agent instances reachable from the runner's root agents."""
+        visited: set[Agent] = set()
+        queue = list(self._explicit_roots)
+        while queue:
+            agent = queue.pop()
+            if agent not in visited:
+                visited.add(agent)
+                queue.extend(agent.handoffs)
+        return visited
+
     def _register_agent_tree(self, root: Agent) -> None:
         """Traverse and index all agents in the handoff tree."""
         with self._registry_lock:
             self._register_agent_tree_unlocked(root)
 
-    def _register_agent_tree_unlocked(self, root: Agent) -> None:
+    def _register_agent_tree_unlocked(
+        self, root: Agent, visited: set[int] | None = None
+    ) -> None:
         """Index ``root`` and its reachable peers. Caller must hold ``_registry_lock``."""
-        if root.name in self._agents_registry:
+        if visited is None:
+            visited = set()
+        if id(root) in visited:
             return
-        self._agents_registry[root.name] = root
+        visited.add(id(root))
+
+        if root.name in self._agents_registry:
+            if self._agents_registry[root.name] is not root:
+                raise ValueError(
+                    f"Conflicting agents with name '{root.name}' detected in agent tree: "
+                    f"{self._agents_registry[root.name]!r} and {root!r}."
+                )
+        else:
+            self._agents_registry[root.name] = root
+
         for peer in root.handoffs:
-            self._register_agent_tree_unlocked(peer)
+            self._register_agent_tree_unlocked(peer, visited)
 
     def _resolve_handoff_target(self, current_agent: Agent, target_name: str) -> Agent:
         """Resolve a handoff target from the registry or an authorized late-bound peer.
@@ -144,12 +170,32 @@ class Runner:
             )
 
         with self._registry_lock:
+            existing = self._agents_registry.get(target_name)
+            if existing is not None and existing is not authorized:
+                # Late replacement: check if the old agent is still reachable from another branch.
+                reachable = self._get_reachable_agents()
+                if existing in reachable:
+                    raise ValueError(
+                        f"Conflicting agents with name '{target_name}' detected: "
+                        f"{existing!r} is still reachable from another branch while "
+                        f"{authorized!r} was added as a handoff."
+                    )
+                # Not reachable elsewhere: update the registry to the new agent
+                self._agents_registry[target_name] = authorized
+
             self._register_agent_tree_unlocked(authorized)
-            return self._agents_registry[target_name]
+            return authorized
 
     def register_agent(self, agent: Agent) -> None:
         """Manually register an agent to the runner index."""
-        self._register_agent_tree(agent)
+        with self._registry_lock:
+            if agent.name in self._agents_registry and self._agents_registry[agent.name] is not agent:
+                raise ValueError(
+                    f"Cannot register agent '{agent.name}': a different agent with that name is already registered."
+                )
+            if agent not in self._explicit_roots:
+                self._explicit_roots.append(agent)
+            self._register_agent_tree_unlocked(agent)
 
     def get_session(self, session_id: str) -> SessionContext | None:
         """Fetch session context by session_id."""

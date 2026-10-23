@@ -4,6 +4,7 @@
 import asyncio
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import uuid
@@ -171,9 +172,7 @@ class WhatsAppChannel(BaseChannel):
                     detail="Invalid Content-Length header",
                 ) from err
 
-            status_413 = getattr(
-                status, "HTTP_413_CONTENT_TOO_LARGE", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-            )
+            status_413 = getattr(status, "HTTP_413_CONTENT_TOO_LARGE", 413)
 
             if content_length < 0 or content_length > self.max_body_size:
                 raise HTTPException(
@@ -416,7 +415,7 @@ class WhatsAppChannel(BaseChannel):
                             )
                             if self.on_24h_window_expired:
                                 try:
-                                    if asyncio.iscoroutinefunction(self.on_24h_window_expired):
+                                    if inspect.iscoroutinefunction(self.on_24h_window_expired):
                                         await self.on_24h_window_expired(to_phone)
                                     else:
                                         self.on_24h_window_expired(to_phone)
