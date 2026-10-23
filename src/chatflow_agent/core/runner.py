@@ -24,6 +24,7 @@ from chatflow_agent.types import (
 
 logger = logging.getLogger("chatflow_agent.runner")
 
+
 class _TurnToken:
     """Marks a running turn for every piece of code it starts."""
 
@@ -105,24 +106,66 @@ class Runner:
 
         # Registry of all known agents (starting agent + all transitive handoffs)
         self._agents_registry: dict[str, Agent] = {}
+        self._roots: list[Agent] = [self.starting_agent]
         self._registry_lock = threading.Lock()
         self._register_agent_tree(self.starting_agent)
 
         if hasattr(self.session_store, "set_agent_resolver"):
             self.session_store.set_agent_resolver(lambda name: self._agents_registry.get(name))
 
+    def _collect_and_validate_reachable_agents(
+        self, extra_roots: list[Agent] | None = None
+    ) -> dict[str, Agent]:
+        """Traverse the reachable agent tree from roots and validate uniqueness by name.
+
+        Raises:
+            ValueError: If two distinct Agent instances share the same name.
+        """
+        registry: dict[str, Agent] = {}
+        visited_ids: set[int] = set()
+
+        def visit(agent: Agent) -> None:
+            if id(agent) in visited_ids:
+                return
+
+            existing = registry.get(agent.name)
+            if existing is not None and existing is not agent:
+                raise ValueError(
+                    f"Duplicate agent name '{agent.name}' found in agent tree. "
+                    "Multiple distinct Agent instances cannot share the same name."
+                )
+
+            registry[agent.name] = agent
+            visited_ids.add(id(agent))
+            for peer in agent.handoffs:
+                visit(peer)
+
+        all_roots = list(self._roots)
+        if extra_roots:
+            for r in extra_roots:
+                if r not in all_roots:
+                    all_roots.append(r)
+
+        for root in all_roots:
+            visit(root)
+
+        return registry
+
     def _register_agent_tree(self, root: Agent) -> None:
-        """Traverse and index all agents in the handoff tree."""
+        """Traverse, validate, and index all agents reachable from root."""
         with self._registry_lock:
             self._register_agent_tree_unlocked(root)
 
     def _register_agent_tree_unlocked(self, root: Agent) -> None:
         """Index ``root`` and its reachable peers. Caller must hold ``_registry_lock``."""
-        if root.name in self._agents_registry:
-            return
-        self._agents_registry[root.name] = root
-        for peer in root.handoffs:
-            self._register_agent_tree_unlocked(peer)
+        if root not in self._roots:
+            self._roots.append(root)
+        try:
+            self._agents_registry = self._collect_and_validate_reachable_agents()
+        except Exception:
+            if root in self._roots and root is not self.starting_agent:
+                self._roots.remove(root)
+            raise
 
     def _resolve_handoff_target(self, current_agent: Agent, target_name: str) -> Agent:
         """Resolve a handoff target from the registry or an authorized late-bound peer.
@@ -144,12 +187,36 @@ class Runner:
             )
 
         with self._registry_lock:
-            self._register_agent_tree_unlocked(authorized)
-            return self._agents_registry[target_name]
+            self._agents_registry = self._collect_and_validate_reachable_agents(
+                extra_roots=[current_agent, authorized]
+            )
+            return authorized
 
     def register_agent(self, agent: Agent) -> None:
-        """Manually register an agent to the runner index."""
-        self._register_agent_tree(agent)
+        """Manually register an agent to the runner index.
+
+        Raises:
+            ValueError: If an agent with the same name is already registered
+                with a different instance, or if registering ``agent`` introduces
+                a duplicate agent name.
+        """
+        with self._registry_lock:
+            existing = self._agents_registry.get(agent.name)
+            if existing is not None:
+                if existing is not agent:
+                    raise ValueError(
+                        f"Agent name '{agent.name}' is already registered with a different Agent instance."
+                    )
+                # Same instance already registered: no-op, but re-validate in case new handoffs were added
+                self._agents_registry = self._collect_and_validate_reachable_agents()
+                return
+
+            self._roots.append(agent)
+            try:
+                self._agents_registry = self._collect_and_validate_reachable_agents()
+            except Exception:
+                self._roots.remove(agent)
+                raise
 
     def get_session(self, session_id: str) -> SessionContext | None:
         """Fetch session context by session_id."""
@@ -392,9 +459,7 @@ class Runner:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(
-                self.run_async(session_id, user_message, metadata=metadata)
-            )
+            return asyncio.run(self.run_async(session_id, user_message, metadata=metadata))
         raise RuntimeError(
             "Runner.run() cannot be called from a running event loop. "
             "Use `await runner.run_async(...)` instead."

@@ -1,6 +1,5 @@
 """Tests for chatflow-agent Runner loop, tool calling, and multi-agent handoffs."""
 
-
 import pytest
 
 from chatflow_agent.core.agent import Agent
@@ -61,12 +60,14 @@ async def test_runner_with_tool_execution() -> None:
 
     # Turn 1: Model requests tool call
     # Turn 2: Model receives tool result and produces final answer
-    mock_engine = MockEngine([
-        EngineTurnResult(
-            tool_calls=[ToolCall(id="call_1", name="multiply", args={"a": 6, "b": 7})]
-        ),
-        EngineTurnResult(text="6 multiplied by 7 is 42."),
-    ])
+    mock_engine = MockEngine(
+        [
+            EngineTurnResult(
+                tool_calls=[ToolCall(id="call_1", name="multiply", args={"a": 6, "b": 7})]
+            ),
+            EngineTurnResult(text="6 multiplied by 7 is 42."),
+        ]
+    )
 
     runner = Runner(starting_agent=agent, engine=mock_engine)
     response = await runner.run_async(session_id="user_2", user_message="What is 6 * 7?")
@@ -98,23 +99,25 @@ async def test_runner_multiagent_handoff_flow() -> None:
     # Turn 1: Triage decides to hand off to Billing Agent
     # Turn 2: Billing agent receives handoff result and calls get_invoice
     # Turn 3: Billing agent provides final answer
-    mock_engine = MockEngine([
-        EngineTurnResult(
-            tool_calls=[
-                ToolCall(
-                    id="call_h1",
-                    name="transfer_to_billing_agent",
-                    args={"reason": "Customer invoice query"},
-                )
-            ]
-        ),
-        EngineTurnResult(
-            tool_calls=[
-                ToolCall(id="call_inv1", name="get_invoice", args={"invoice_id": "INV-10"})
-            ]
-        ),
-        EngineTurnResult(text="Here is your invoice INV-10 for $100."),
-    ])
+    mock_engine = MockEngine(
+        [
+            EngineTurnResult(
+                tool_calls=[
+                    ToolCall(
+                        id="call_h1",
+                        name="transfer_to_billing_agent",
+                        args={"reason": "Customer invoice query"},
+                    )
+                ]
+            ),
+            EngineTurnResult(
+                tool_calls=[
+                    ToolCall(id="call_inv1", name="get_invoice", args={"invoice_id": "INV-10"})
+                ]
+            ),
+            EngineTurnResult(text="Here is your invoice INV-10 for $100."),
+        ]
+    )
 
     runner = Runner(starting_agent=triage_agent, engine=mock_engine)
     response = await runner.run_async(
@@ -165,15 +168,17 @@ async def test_runner_handoff_context_updates_are_available_to_recipient_tools()
             "invoice_id": session.metadata["invoice_id"],
         }
 
-    mock_engine = MockEngine([
-        EngineTurnResult(
-            tool_calls=[ToolCall(id="call_handoff", name="transfer_with_context", args={})]
-        ),
-        EngineTurnResult(
-            tool_calls=[ToolCall(id="call_context", name="get_customer_context", args={})]
-        ),
-        EngineTurnResult(text="Billing context received."),
-    ])
+    mock_engine = MockEngine(
+        [
+            EngineTurnResult(
+                tool_calls=[ToolCall(id="call_handoff", name="transfer_with_context", args={})]
+            ),
+            EngineTurnResult(
+                tool_calls=[ToolCall(id="call_context", name="get_customer_context", args={})]
+            ),
+            EngineTurnResult(text="Billing context received."),
+        ]
+    )
     runner = Runner(starting_agent=triage_agent, session_store=session_store, engine=mock_engine)
 
     response = await runner.run_async(
@@ -210,12 +215,14 @@ async def test_runner_does_not_apply_context_updates_for_rejected_handoff() -> N
         default_agent=triage_agent,
         metadata={"customer_tier": "standard"},
     )
-    mock_engine = MockEngine([
-        EngineTurnResult(
-            tool_calls=[ToolCall(id="call_handoff", name="transfer_with_context", args={})]
-        ),
-        EngineTurnResult(text="The transfer limit was reached."),
-    ])
+    mock_engine = MockEngine(
+        [
+            EngineTurnResult(
+                tool_calls=[ToolCall(id="call_handoff", name="transfer_with_context", args={})]
+            ),
+            EngineTurnResult(text="The transfer limit was reached."),
+        ]
+    )
     runner = Runner(
         starting_agent=triage_agent,
         session_store=session_store,
@@ -240,9 +247,7 @@ async def test_runner_handoff_limit_preserves_tool_result_parity(
     max_handoffs: int, max_tool_iterations: int
 ) -> None:
     billing_agent = Agent(name="Billing", instructions="Handle invoices.")
-    triage_agent = Agent(
-        name="Triage", instructions="Route requests.", handoffs=[billing_agent]
-    )
+    triage_agent = Agent(name="Triage", instructions="Route requests.", handoffs=[billing_agent])
     executed: list[str] = []
 
     @triage_agent.tool
@@ -260,11 +265,13 @@ async def test_runner_handoff_limit_preserves_tool_result_parity(
         calls.append(
             ToolCall(id="accepted", name="transfer_with_context", args={"value": "accepted"})
         )
-    calls.extend([
-        ToolCall(id="rejected", name="transfer_with_context", args={"value": "rejected"}),
-        ToolCall(id="skipped_action", name="record_action", args={"value": "after"}),
-        ToolCall(id="skipped_handoff", name="transfer_with_context", args={"value": "after"}),
-    ])
+    calls.extend(
+        [
+            ToolCall(id="rejected", name="transfer_with_context", args={"value": "rejected"}),
+            ToolCall(id="skipped_action", name="record_action", args={"value": "after"}),
+            ToolCall(id="skipped_handoff", name="transfer_with_context", args={"value": "after"}),
+        ]
+    )
 
     class ValidatingEngine(BaseEngine):
         def __init__(self) -> None:
@@ -350,8 +357,7 @@ def test_runner_run_raises_inside_running_loop() -> None:
         unawaited = [
             w
             for w in caught
-            if issubclass(w.category, RuntimeWarning)
-            and "never awaited" in str(w.message)
+            if issubclass(w.category, RuntimeWarning) and "never awaited" in str(w.message)
         ]
         assert unawaited == [], f"Unexpected unawaited coroutine warnings: {unawaited}"
 
@@ -503,13 +509,9 @@ async def test_runner_rejects_cross_branch_handoff_to_registered_agent() -> None
     mock_engine = MockEngine(
         [
             EngineTurnResult(
-                tool_calls=[
-                    ToolCall(id="call_s", name="transfer_to_sales", args={"reason": "buy"})
-                ]
+                tool_calls=[ToolCall(id="call_s", name="transfer_to_sales", args={"reason": "buy"})]
             ),
-            EngineTurnResult(
-                tool_calls=[ToolCall(id="call_x", name="escalate_to_admin", args={})]
-            ),
+            EngineTurnResult(tool_calls=[ToolCall(id="call_x", name="escalate_to_admin", args={})]),
         ]
     )
 
@@ -526,3 +528,136 @@ async def test_runner_rejects_cross_branch_handoff_to_registered_agent() -> None
     with pytest.raises(AgentHandoffError):
         runner._resolve_handoff_target(sales, "AdminAgent")
     assert runner._resolve_handoff_target(support, "AdminAgent") is admin
+
+
+# ── ISSUE-123: Agent tree validation and duplicate name prevention ────────────
+
+
+def test_runner_rejects_duplicate_agent_names_at_construction() -> None:
+    """Building a Runner whose tree contains distinct agents with the same name raises ValueError."""
+    billing_support = Agent(name="Support", instructions="BILLING support")
+    tech_support = Agent(name="Support", instructions="TECH support")
+    billing_desk = Agent(name="Billing desk", instructions="billing", handoffs=[billing_support])
+    tech_desk = Agent(name="Tech desk", instructions="tech", handoffs=[tech_support])
+    root = Agent(name="Root", instructions="root", handoffs=[billing_desk, tech_desk])
+
+    with pytest.raises(ValueError, match="Support"):
+        Runner(starting_agent=root)
+
+
+@pytest.mark.asyncio
+async def test_runner_allows_shared_agent_instance_in_dag() -> None:
+    """The same Agent instance reachable from several branches (a DAG) is valid and functional."""
+    shared_support = Agent(name="Support", instructions="shared support")
+    billing_desk = Agent(name="Billing desk", instructions="billing", handoffs=[shared_support])
+    tech_desk = Agent(name="Tech desk", instructions="tech", handoffs=[shared_support])
+    root = Agent(name="Root", instructions="root", handoffs=[billing_desk, tech_desk])
+
+    runner = Runner(starting_agent=root)
+    assert runner._agents_registry["Support"] is shared_support
+
+    # Verify handoff resolution works from both branches
+    assert runner._resolve_handoff_target(billing_desk, "Support") is shared_support
+    assert runner._resolve_handoff_target(tech_desk, "Support") is shared_support
+
+
+def test_runner_register_agent_conflict_and_idempotency() -> None:
+    """register_agent() raises ValueError on name conflict, while re-registering same instance is a no-op."""
+    support = Agent(name="Support", instructions="Support specialist")
+    root = Agent(name="Root", instructions="root", handoffs=[support])
+    runner = Runner(starting_agent=root)
+
+    # Re-registering the same instance is a no-op
+    runner.register_agent(support)
+    assert runner._agents_registry["Support"] is support
+
+    # Registering a distinct agent with the same name raises ValueError
+    conflicting_support = Agent(name="Support", instructions="Another support specialist")
+    with pytest.raises(ValueError, match="Support"):
+        runner.register_agent(conflicting_support)
+
+
+@pytest.mark.asyncio
+async def test_runner_late_add_handoff_replacement_resolves_and_updates_registry() -> None:
+    """Late Agent.add_handoff() replaces peer, resolves next handoff to new peer, and updates registry.
+
+    If the old peer remains reachable from another branch, handoff raises ValueError.
+    """
+    support_v1 = Agent(name="Support", instructions="Support v1")
+    root = Agent(name="Root", instructions="root", handoffs=[support_v1])
+    runner = Runner(starting_agent=root)
+    assert runner._agents_registry["Support"] is support_v1
+
+    # Late replacement
+    support_v2 = Agent(name="Support", instructions="Support v2")
+    root.add_handoff(support_v2)
+
+    resolved = runner._resolve_handoff_target(root, "Support")
+    assert resolved is support_v2
+    assert runner._agents_registry["Support"] is support_v2
+
+    # Now verify: if old object is still reachable from another branch, conflict raises ValueError
+    billing_desk = Agent(name="Billing desk", instructions="billing", handoffs=[support_v1])
+    root.add_handoff(billing_desk)
+    # Now root -> billing_desk -> support_v1, AND root -> support_v2
+    with pytest.raises(ValueError, match="Support"):
+        runner._resolve_handoff_target(root, "Support")
+
+
+@pytest.mark.asyncio
+async def test_runner_sqlite_existing_session_resolves_replaced_agent(tmp_path) -> None:
+    """An existing session in SQLite whose active agent was replaced resolves to the new agent object."""
+    from chatflow_agent.core.memory import SQLiteSessionStore
+
+    def refund() -> str:
+        return "refunded"
+
+    def reboot() -> str:
+        return "rebooted"
+
+    support_v1 = Agent(name="Support", instructions="Support v1", tools=[refund])
+    root = Agent(name="Root", instructions="Root", handoffs=[support_v1])
+
+    db_file = tmp_path / "test_session_replace.db"
+    store = SQLiteSessionStore(db_path=str(db_file))
+
+    class RoutingEngine(BaseEngine):
+        async def generate_turn_async(
+            self, agent: Agent, history: list[Message]
+        ) -> EngineTurnResult:
+            if agent.name == "Root":
+                return EngineTurnResult(
+                    tool_calls=[ToolCall(id="c1", name="transfer_to_support", args={})]
+                )
+            return EngineTurnResult(
+                text=f"{agent.get_instructions()} tools={[t.name for t in agent.tools]}"
+            )
+
+    runner = Runner(starting_agent=root, session_store=store, engine=RoutingEngine())
+
+    # Turn 1: Root hands off to Support (v1)
+    res1 = await runner.run_async(session_id="user_sess", user_message="need help")
+    assert res1.active_agent_name == "Support"
+    assert "Support v1" in res1.content
+    assert "refund" in res1.content
+
+    # Now replace Support with v2 on root
+    support_v2 = Agent(name="Support", instructions="Support v2", tools=[reboot])
+    root.add_handoff(support_v2)
+    runner._resolve_handoff_target(root, "Support")
+    assert runner._agents_registry["Support"] is support_v2
+
+    # Reload session from SQLite store
+    loaded_session = store.get("user_sess")
+    assert loaded_session is not None
+    assert loaded_session.active_agent is support_v2
+    assert loaded_session.active_agent.instructions == "Support v2"
+    assert [t.name for t in loaded_session.active_agent.tools] == ["reboot"]
+
+    # Turn 2: next turn uses support_v2
+    res2 = await runner.run_async(session_id="user_sess", user_message="check tools")
+    assert res2.active_agent_name == "Support"
+    assert "Support v2" in res2.content
+    assert "reboot" in res2.content
+
+    store.close()
