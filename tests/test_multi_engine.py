@@ -192,11 +192,15 @@ def test_resolve_engine_heuristic() -> None:
     assert engine_grok.base_url == "https://api.x.ai/v1"
 
     # 3. Claude
-    agent_claude = Agent(name="Claude", provider="anthropic", model="claude-3-5-sonnet", instructions="...")
+    agent_claude = Agent(
+        name="Claude", provider="anthropic", model="claude-3-5-sonnet", instructions="..."
+    )
     assert isinstance(resolve_engine(agent_claude), AnthropicEngine)
 
     # 4. Gemini
-    agent_gemini = Agent(name="Gemini", provider="gemini", model="gemini-2.5-flash", instructions="...")
+    agent_gemini = Agent(
+        name="Gemini", provider="gemini", model="gemini-2.5-flash", instructions="..."
+    )
     assert isinstance(resolve_engine(agent_gemini), GeminiEngine)
 
 
@@ -290,7 +294,9 @@ async def test_heterogeneous_swarm_handoff() -> None:
 
     # Mock engine specifically attached to gemma_agent
     class MockGemmaEngine(OpenAIEngine):
-        async def generate_turn_async(self, agent: Agent, history: list[Message]) -> EngineTurnResult:
+        async def generate_turn_async(
+            self, agent: Agent, history: list[Message]
+        ) -> EngineTurnResult:
             return EngineTurnResult(text="Local Gemma specialist processed your query!")
 
     gemma_agent.engine = MockGemmaEngine(provider="ollama")
@@ -303,7 +309,9 @@ async def test_heterogeneous_swarm_handoff() -> None:
     )
 
     class MockTriageEngine(GeminiEngine):
-        async def generate_turn_async(self, agent: Agent, history: list[Message]) -> EngineTurnResult:
+        async def generate_turn_async(
+            self, agent: Agent, history: list[Message]
+        ) -> EngineTurnResult:
             return EngineTurnResult(
                 tool_calls=[
                     ToolCall(
@@ -324,7 +332,9 @@ async def test_heterogeneous_swarm_handoff() -> None:
     assert response.handoff.target_agent_name == "Local Specialist"
 
 
-def test_custom_base_url_rejects_fallback_to_global_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_custom_base_url_rejects_fallback_to_global_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Ensure custom/unofficial base_url raises ValueError instead of leaking OPENAI_API_KEY (SEC-07)."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-prod-key-12345")
 
@@ -461,10 +471,11 @@ async def test_anthropic_retry_on_529_overloaded() -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            return 529, {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
-        return 200, {
-            "content": [{"type": "text", "text": "Recovered from 529"}]
-        }
+            return 529, {
+                "type": "error",
+                "error": {"type": "overloaded_error", "message": "Overloaded"},
+            }
+        return 200, {"content": [{"type": "text", "text": "Recovered from 529"}]}
 
     transport = MockTransport(fake_response)
     client = httpx.AsyncClient(transport=transport)
@@ -492,10 +503,12 @@ async def test_anthropic_retry_with_retry_after_header() -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            return 429, {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limited"}}, {"Retry-After": "0.01"}
-        return 200, {
-            "content": [{"type": "text", "text": "Recovered after rate limit"}]
-        }
+            return (
+                429,
+                {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limited"}},
+                {"Retry-After": "0.01"},
+            )
+        return 200, {"content": [{"type": "text", "text": "Recovered after rate limit"}]}
 
     transport = MockTransport(fake_response)
     client = httpx.AsyncClient(transport=transport)
@@ -524,9 +537,7 @@ async def test_anthropic_retry_on_connect_error() -> None:
         attempts += 1
         if attempts == 1:
             raise httpx.ConnectError("Connection refused", request=req)
-        return 200, {
-            "content": [{"type": "text", "text": "Connected on retry"}]
-        }
+        return 200, {"content": [{"type": "text", "text": "Connected on retry"}]}
 
     transport = MockTransport(fake_response)
     client = httpx.AsyncClient(transport=transport)
@@ -553,7 +564,10 @@ async def test_anthropic_max_retries_exhausted_raises_provider_error() -> None:
     def fake_response(req: httpx.Request) -> tuple[int, dict]:
         nonlocal attempts
         attempts += 1
-        return 529, {"type": "error", "error": {"type": "overloaded_error", "message": "Anthropic is overloaded"}}
+        return 529, {
+            "type": "error",
+            "error": {"type": "overloaded_error", "message": "Anthropic is overloaded"},
+        }
 
     transport = MockTransport(fake_response)
     client = httpx.AsyncClient(transport=transport)
@@ -581,7 +595,10 @@ async def test_anthropic_non_retryable_error_does_not_retry() -> None:
     def fake_response(req: httpx.Request) -> tuple[int, dict]:
         nonlocal attempts
         attempts += 1
-        return 401, {"type": "error", "error": {"type": "authentication_error", "message": "Invalid API Key"}}
+        return 401, {
+            "type": "error",
+            "error": {"type": "authentication_error", "message": "Invalid API Key"},
+        }
 
     transport = MockTransport(fake_response)
     client = httpx.AsyncClient(transport=transport)
@@ -623,13 +640,17 @@ def test_openai_keeps_history_system_messages_in_sequence() -> None:
 @pytest.mark.asyncio
 async def test_anthropic_appends_history_system_messages_to_the_system_prompt() -> None:
     transport = MockTransport(lambda req: (200, {"content": [{"type": "text", "text": "Hola"}]}))
-    engine = AnthropicEngine(api_key="ant-test-key", http_client=httpx.AsyncClient(transport=transport))
+    engine = AnthropicEngine(
+        api_key="ant-test-key", http_client=httpx.AsyncClient(transport=transport)
+    )
     agent = Agent(name="Bot", model="claude-3-5-sonnet", instructions="Base instructions")
 
     await engine.generate_turn_async(agent=agent, history=SYSTEM_HISTORY)
 
     payload = json.loads(transport.requests_received[0].content)
-    assert payload["system"] == "Base instructions\n\nDynamic safety constraint\n\nAnswer in Spanish"
+    assert (
+        payload["system"] == "Base instructions\n\nDynamic safety constraint\n\nAnswer in Spanish"
+    )
     assert payload["messages"] == [{"role": "user", "content": "Hello"}]
 
 
@@ -644,7 +665,12 @@ async def test_gemini_appends_history_system_messages_to_the_system_instruction(
         return SimpleNamespace(candidates=[])
 
     engine = GeminiEngine(api_key="test-key")
-    engine.client = cast(Any, SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))))
+    engine.client = cast(
+        Any,
+        SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+        ),
+    )
     agent = Agent(name="Bot", model="gemini-2.5-flash", instructions="Base instructions")
 
     await engine.generate_turn_async(agent=agent, history=SYSTEM_HISTORY)
@@ -654,3 +680,198 @@ async def test_gemini_appends_history_system_messages_to_the_system_instruction(
     )
     assert [c.role for c in seen["contents"]] == ["user"]
 
+
+# ── ISSUE-122: Malformed provider response handling and bounded error bodies ──
+
+
+@pytest.mark.asyncio
+async def test_openai_malformed_html_body_raises_provider_error_no_retry() -> None:
+    """A 200 response with an HTML body raises ProviderError chained to JSONDecodeError with 1 request."""
+    call_count = 0
+
+    def mock_transport(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, text="<html>login</html>")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(mock_transport))
+    engine = OpenAIEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    with pytest.raises(ProviderError) as exc_info:
+        await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert call_count == 1  # No retries on 2xx decode errors
+
+
+@pytest.mark.asyncio
+async def test_openai_malformed_json_array_raises_provider_error() -> None:
+    """A 200 response with a JSON array raises ProviderError."""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=[1]))
+    )
+    engine = OpenAIEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    with pytest.raises(ProviderError, match="root JSON is not an object"):
+        await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+
+@pytest.mark.asyncio
+async def test_openai_malformed_choices_non_object_raises_provider_error() -> None:
+    """A 200 response where choices[0] is not an object raises ProviderError."""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"choices": ["not_an_object"]})
+        )
+    )
+    engine = OpenAIEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    with pytest.raises(ProviderError, match="'choices\\[0\\]' is not an object"):
+        await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+
+@pytest.mark.asyncio
+async def test_openai_tool_args_non_object_handled_as_raw_input() -> None:
+    """Tool arguments that are valid JSON but not an object are handled as raw_input with no ValidationError."""
+    tool_call_array = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "function": {"name": "func_a", "arguments": "[1,2]"},
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=tool_call_array))
+    )
+    engine = OpenAIEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    res = await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+    assert len(res.tool_calls) == 1
+    assert res.tool_calls[0].args == {"raw_input": "[1,2]"}
+
+    tool_call_null = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "c2",
+                            "function": {"name": "func_b", "arguments": "null"},
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    client_null = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=tool_call_null))
+    )
+    engine_null = OpenAIEngine(api_key="test", http_client=client_null)
+
+    res_null = await engine_null.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+    assert len(res_null.tool_calls) == 1
+    assert res_null.tool_calls[0].args == {"raw_input": "null"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_malformed_html_body_raises_provider_error_no_retry() -> None:
+    """A 200 response with an HTML body in AnthropicEngine raises ProviderError with 1 request."""
+    call_count = 0
+
+    def mock_transport(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, text="<html>")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(mock_transport))
+    engine = AnthropicEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    with pytest.raises(ProviderError) as exc_info:
+        await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert call_count == 1  # No retries on 2xx decode errors
+
+
+@pytest.mark.asyncio
+async def test_anthropic_content_null_raises_provider_error() -> None:
+    """A 200 response where 'content' is null raises ProviderError."""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"content": None}))
+    )
+    engine = AnthropicEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    with pytest.raises(ProviderError, match="'content' is not a list"):
+        await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+
+@pytest.mark.asyncio
+async def test_anthropic_tool_input_list_handled_as_raw_input() -> None:
+    """An Anthropic tool_use block where input is a list is handled as raw_input with no ValidationError."""
+    payload = {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "tool_call_1",
+                "name": "calc",
+                "input": [1, 2],
+            }
+        ]
+    }
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=payload))
+    )
+    engine = AnthropicEngine(api_key="test", http_client=client)
+    agent = Agent(name="A", instructions="x")
+
+    res = await engine.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+    assert len(res.tool_calls) == 1
+    assert res.tool_calls[0].args == {"raw_input": [1, 2]}
+
+
+@pytest.mark.asyncio
+async def test_provider_error_body_length_bounded() -> None:
+    """A 400 error response with a large 20 KB body bounds the ProviderError message length."""
+    huge_body = "x" * 20000
+
+    # OpenAI test
+    client_openai = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(400, text=huge_body))
+    )
+    engine_openai = OpenAIEngine(api_key="secret-key-12345", http_client=client_openai)
+    agent = Agent(name="A", instructions="x")
+
+    with pytest.raises(ProviderError) as exc_openai:
+        await engine_openai.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+    err_text = str(exc_openai.value)
+    assert len(err_text) < 1100
+    assert "secret-key-12345" not in err_text
+    assert "Authorization" not in err_text
+
+    # Anthropic test
+    client_anthropic = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(400, text=huge_body))
+    )
+    engine_anthropic = AnthropicEngine(api_key="secret-key-67890", http_client=client_anthropic)
+
+    with pytest.raises(ProviderError) as exc_anthropic:
+        await engine_anthropic.generate_turn_async(agent, [Message(role=Role.USER, content="hi")])
+
+    err_text_ant = str(exc_anthropic.value)
+    assert len(err_text_ant) < 1100
+    assert "secret-key-67890" not in err_text_ant
+    assert "x-api-key" not in err_text_ant

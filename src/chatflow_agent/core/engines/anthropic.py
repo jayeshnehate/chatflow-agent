@@ -54,12 +54,14 @@ class AnthropicEngine(BaseEngine):
                     content_blocks.append({"type": "text", "text": msg.content})
                 if msg.tool_calls:
                     for call in msg.tool_calls:
-                        content_blocks.append({
-                            "type": "tool_use",
-                            "id": call.id,
-                            "name": call.name,
-                            "input": call.args,
-                        })
+                        content_blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": call.id,
+                                "name": call.name,
+                                "input": call.args,
+                            }
+                        )
                 if content_blocks:
                     messages.append({"role": "assistant", "content": content_blocks})
 
@@ -71,12 +73,14 @@ class AnthropicEngine(BaseEngine):
                         if isinstance(res.content, (dict, list))
                         else str(res.content)
                     )
-                    content_blocks.append({
-                        "type": "tool_result",
-                        "tool_use_id": res.tool_call_id,
-                        "content": content_str,
-                        "is_error": res.is_error,
-                    })
+                    content_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": res.tool_call_id,
+                            "content": content_str,
+                            "is_error": res.is_error,
+                        }
+                    )
                 if content_blocks:
                     messages.append({"role": "user", "content": content_blocks})
 
@@ -109,11 +113,13 @@ class AnthropicEngine(BaseEngine):
         if all_tools:
             anthropic_tools = []
             for t in all_tools:
-                anthropic_tools.append({
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": _lowercase_schema_types(t.to_openai_parameters()),
-                })
+                anthropic_tools.append(
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": _lowercase_schema_types(t.to_openai_parameters()),
+                    }
+                )
             payload["tools"] = anthropic_tools
 
         headers = {
@@ -139,7 +145,11 @@ class AnthropicEngine(BaseEngine):
                             except (ValueError, TypeError):
                                 parsed_delay = None
 
-                        base = parsed_delay if parsed_delay is not None else self.base_delay * (2 ** retries)
+                        base = (
+                            parsed_delay
+                            if parsed_delay is not None
+                            else self.base_delay * (2**retries)
+                        )
                         delay = min(self.max_delay, base + random.uniform(0.0, 0.25 * base))
                         logger.warning(
                             f"Anthropic returned HTTP {resp.status_code}. Retrying in {delay:.2f}s (attempt {retries + 1}/{self.max_retries})..."
@@ -147,18 +157,17 @@ class AnthropicEngine(BaseEngine):
                         await asyncio.sleep(delay)
                         retries += 1
                         continue
-                    raise ProviderError(
-                        f"Anthropic API error ({resp.status_code}): {resp.text}"
-                    )
+                    body_excerpt = resp.text[:1000]
+                    raise ProviderError(f"Anthropic API error ({resp.status_code}): {body_excerpt}")
 
                 if resp.status_code >= 400:
-                    raise ProviderError(f"Anthropic API error ({resp.status_code}): {resp.text}")
+                    body_excerpt = resp.text[:1000]
+                    raise ProviderError(f"Anthropic API error ({resp.status_code}): {body_excerpt}")
 
-                data = resp.json()
                 break
             except (httpx.ConnectError, httpx.ConnectTimeout) as net_err:
                 if retries < self.max_retries:
-                    base = self.base_delay * (2 ** retries)
+                    base = self.base_delay * (2**retries)
                     delay = min(self.max_delay, base + random.uniform(0.0, 0.25 * base))
                     logger.warning(
                         f"Anthropic connect error: {net_err}. Retrying in {delay:.2f}s..."
@@ -173,21 +182,62 @@ class AnthropicEngine(BaseEngine):
                 if not self._external_client:
                     await client.aclose()
 
+        try:
+            data = resp.json()
+        except Exception as err:
+            raise ProviderError(
+                f"Anthropic response parsing failed: invalid JSON ({resp.status_code})"
+            ) from err
+
+        if not isinstance(data, dict):
+            raise ProviderError(
+                f"Anthropic response parsing failed: root JSON is not an object ({resp.status_code})"
+            )
+
+        content = data.get("content")
+        if content is None or not isinstance(content, list):
+            raise ProviderError(
+                f"Anthropic response parsing failed: 'content' is not a list ({resp.status_code})"
+            )
+
         text_chunks: list[str] = []
         extracted_calls: list[ToolCall] = []
 
-        for block in data.get("content", []):
-            b_type = block.get("type")
-            if b_type == "text":
-                text_chunks.append(block.get("text", ""))
-            elif b_type == "tool_use":
-                extracted_calls.append(
-                    ToolCall(
-                        id=block.get("id", ""),
-                        name=block.get("name", ""),
-                        args=block.get("input", {}),
+        try:
+            for block in content:
+                if not isinstance(block, dict):
+                    raise ProviderError(
+                        f"Anthropic response parsing failed: content block is not an object ({resp.status_code})"
                     )
-                )
+                b_type = block.get("type")
+                if b_type == "text":
+                    text_chunks.append(str(block.get("text") or ""))
+                elif b_type == "tool_use":
+                    input_data = block.get("input", {})
+                    if isinstance(input_data, dict):
+                        tool_args = input_data
+                    elif isinstance(input_data, str):
+                        try:
+                            loaded = json.loads(input_data) if input_data.strip() else {}
+                            tool_args = (
+                                loaded if isinstance(loaded, dict) else {"raw_input": input_data}
+                            )
+                        except json.JSONDecodeError:
+                            tool_args = {"raw_input": input_data}
+                    else:
+                        tool_args = {"raw_input": input_data} if input_data is not None else {}
+
+                    extracted_calls.append(
+                        ToolCall(
+                            id=str(block.get("id") or ""),
+                            name=str(block.get("name") or ""),
+                            args=tool_args,
+                        )
+                    )
+        except ProviderError:
+            raise
+        except Exception as err:
+            raise ProviderError(f"Anthropic response parsing failed: {err}") from err
 
         return EngineTurnResult(
             text="".join(text_chunks) if text_chunks else None,

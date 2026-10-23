@@ -1,4 +1,3 @@
-
 """Universal OpenAI-compatible engine for chatflow-agent.
 
 Supports OpenAI (GPT-4o), xAI Grok, Ollama (Google Gemma, Llama), DeepSeek,
@@ -85,8 +84,6 @@ PROVIDER_PRESETS: dict[str, dict[str, str]] = {
 }
 
 
-
-
 def _lowercase_schema_types(schema: Any) -> Any:
     """Normalize schema types while preserving user-provided defaults."""
     if isinstance(schema, dict):
@@ -97,17 +94,14 @@ def _lowercase_schema_types(schema: Any) -> Any:
                 new_dict[k] = v.lower()
             elif k == "type" and isinstance(v, list):
                 # Type lists (e.g. ["INTEGER", "NULL"]) must normalize elementwise.
-                new_dict[k] = [
-                    item.lower() if isinstance(item, str) else item for item in v
-                ]
+                new_dict[k] = [item.lower() if isinstance(item, str) else item for item in v]
             elif k == "default":
                 # Preserve user-provided default values.
                 new_dict[k] = v
             elif k == "properties" and isinstance(v, dict):
                 # Property names are arbitrary, including "default".
                 new_dict[k] = {
-                    name: _lowercase_schema_types(prop_schema)
-                    for name, prop_schema in v.items()
+                    name: _lowercase_schema_types(prop_schema) for name, prop_schema in v.items()
                 }
             else:
                 new_dict[k] = _lowercase_schema_types(v)
@@ -118,8 +112,6 @@ def _lowercase_schema_types(schema: Any) -> Any:
         return [_lowercase_schema_types(item) for item in schema]
 
     return schema
-
-
 
 
 class OpenAIEngine(BaseEngine):
@@ -141,9 +133,7 @@ class OpenAIEngine(BaseEngine):
             or preset.get("base_url", "https://api.openai.com/v1")
         ).rstrip("/")
 
-        official_base_urls = {
-            p["base_url"].rstrip("/") for p in PROVIDER_PRESETS.values()
-        }
+        official_base_urls = {p["base_url"].rstrip("/") for p in PROVIDER_PRESETS.values()}
         is_official = self.base_url in official_base_urls
         is_local = _is_local_base_url(self.base_url)
 
@@ -155,9 +145,7 @@ class OpenAIEngine(BaseEngine):
         elif is_local:
             # For local services (Ollama, LM Studio, vLLM on localhost), do not leak global cloud API keys
             self.api_key = (
-                os.environ.get(env_key_name)
-                if self.provider in ("ollama", "gemma")
-                else None
+                os.environ.get(env_key_name) if self.provider in ("ollama", "gemma") else None
             ) or "ollama"
         elif is_official:
             self.api_key = os.environ.get(env_key_name)
@@ -201,14 +189,16 @@ class OpenAIEngine(BaseEngine):
                 if msg.tool_calls:
                     formatted_calls = []
                     for call in msg.tool_calls:
-                        formatted_calls.append({
-                            "id": call.id,
-                            "type": "function",
-                            "function": {
-                                "name": call.name,
-                                "arguments": json.dumps(call.args),
-                            },
-                        })
+                        formatted_calls.append(
+                            {
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.name,
+                                    "arguments": json.dumps(call.args),
+                                },
+                            }
+                        )
                     assistant_msg["tool_calls"] = formatted_calls
                 messages.append(assistant_msg)
 
@@ -219,12 +209,14 @@ class OpenAIEngine(BaseEngine):
                         if isinstance(res.content, (dict, list))
                         else str(res.content)
                     )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": res.tool_call_id,
-                        "name": res.name,
-                        "content": content_str,
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": res.tool_call_id,
+                            "name": res.name,
+                            "content": content_str,
+                        }
+                    )
 
         return messages
 
@@ -246,14 +238,16 @@ class OpenAIEngine(BaseEngine):
             openai_tools = []
             for t in all_tools:
                 parameters = _lowercase_schema_types(t.to_openai_parameters())
-                openai_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": parameters,
-                    },
-                })
+                openai_tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": parameters,
+                        },
+                    }
+                )
             payload["tools"] = openai_tools
             payload["tool_choice"] = "auto"
 
@@ -279,7 +273,12 @@ class OpenAIEngine(BaseEngine):
                                 parsed_delay = None
 
                         import random
-                        base = parsed_delay if parsed_delay is not None else self.base_delay * (2 ** retries)
+
+                        base = (
+                            parsed_delay
+                            if parsed_delay is not None
+                            else self.base_delay * (2**retries)
+                        )
                         delay = min(self.max_delay, base + random.uniform(0.0, 0.25 * base))
                         logger.warning(
                             f"{self.provider.upper()} returned HTTP {resp.status_code}. Retrying in {delay:.2f}s (attempt {retries + 1}/{self.max_retries})..."
@@ -287,20 +286,22 @@ class OpenAIEngine(BaseEngine):
                         await asyncio.sleep(delay)
                         retries += 1
                         continue
+                    body_excerpt = resp.text[:1000]
                     raise ProviderError(
-                        f"{self.provider.upper()} API request failed ({resp.status_code}): {resp.text}"
+                        f"{self.provider.upper()} API request failed ({resp.status_code}): {body_excerpt}"
                     )
 
                 if resp.status_code >= 400:
+                    body_excerpt = resp.text[:1000]
                     raise ProviderError(
-                        f"{self.provider.upper()} API request failed ({resp.status_code}): {resp.text}"
+                        f"{self.provider.upper()} API request failed ({resp.status_code}): {body_excerpt}"
                     )
-                data = resp.json()
                 break
             except (httpx.ConnectError, httpx.ConnectTimeout) as net_err:
                 if retries < self.max_retries:
                     import random
-                    base = self.base_delay * (2 ** retries)
+
+                    base = self.base_delay * (2**retries)
                     delay = min(self.max_delay, base + random.uniform(0.0, 0.25 * base))
                     logger.warning(
                         f"{self.provider.upper()} connect error: {net_err}. Retrying in {delay:.2f}s..."
@@ -308,39 +309,87 @@ class OpenAIEngine(BaseEngine):
                     await asyncio.sleep(delay)
                     retries += 1
                     continue
-                raise ProviderError(f"{self.provider.upper()} connection error: {net_err}") from net_err
+                raise ProviderError(
+                    f"{self.provider.upper()} connection error: {net_err}"
+                ) from net_err
             except httpx.RequestError as err:
                 raise ProviderError(f"{self.provider.upper()} connection error: {err}") from err
             finally:
                 if not self._external_client:
                     await client.aclose()
 
+        try:
+            data = resp.json()
+        except Exception as err:
+            raise ProviderError(
+                f"{self.provider.upper()} response parsing failed: invalid JSON ({resp.status_code})"
+            ) from err
+
+        if not isinstance(data, dict):
+            raise ProviderError(
+                f"{self.provider.upper()} response parsing failed: root JSON is not an object ({resp.status_code})"
+            )
+
         choices = data.get("choices", [])
+        if not isinstance(choices, list):
+            raise ProviderError(
+                f"{self.provider.upper()} response parsing failed: 'choices' is not a list ({resp.status_code})"
+            )
+
         if not choices:
             return EngineTurnResult(text="", raw_response=data)
 
         first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise ProviderError(
+                f"{self.provider.upper()} response parsing failed: 'choices[0]' is not an object ({resp.status_code})"
+            )
+
         choice_msg = first_choice.get("message", {})
+        if not isinstance(choice_msg, dict):
+            raise ProviderError(
+                f"{self.provider.upper()} response parsing failed: 'message' is not an object ({resp.status_code})"
+            )
+
         text_content = choice_msg.get("content")
         raw_tool_calls = choice_msg.get("tool_calls") or []
+        if not isinstance(raw_tool_calls, list):
+            raise ProviderError(
+                f"{self.provider.upper()} response parsing failed: 'tool_calls' is not a list ({resp.status_code})"
+            )
 
         extracted_calls: list[ToolCall] = []
-        for idx, tc in enumerate(raw_tool_calls):
-            call_id = tc.get("id") or f"call_{idx}"
-            func_data = tc.get("function", {})
-            func_name = func_data.get("name", "")
-            raw_args = func_data.get("arguments", "{}")
+        try:
+            for idx, tc in enumerate(raw_tool_calls):
+                if not isinstance(tc, dict):
+                    continue
+                call_id = str(tc.get("id") or f"call_{idx}")
+                func_data = tc.get("function", {})
+                if not isinstance(func_data, dict):
+                    func_data = {}
+                func_name = str(func_data.get("name") or "")
+                raw_args = func_data.get("arguments", "{}")
 
-            parsed_args: dict[str, Any] = {}
-            if isinstance(raw_args, str):
-                try:
-                    parsed_args = json.loads(raw_args) if raw_args.strip() else {}
-                except json.JSONDecodeError:
-                    parsed_args = {"raw_input": raw_args}
-            elif isinstance(raw_args, dict):
-                parsed_args = raw_args
+                parsed_args: dict[str, Any] = {}
+                if isinstance(raw_args, str):
+                    try:
+                        loaded = json.loads(raw_args) if raw_args.strip() else {}
+                        if isinstance(loaded, dict):
+                            parsed_args = loaded
+                        else:
+                            parsed_args = {"raw_input": raw_args}
+                    except json.JSONDecodeError:
+                        parsed_args = {"raw_input": raw_args}
+                elif isinstance(raw_args, dict):
+                    parsed_args = raw_args
+                else:
+                    parsed_args = {"raw_input": str(raw_args)}
 
-            extracted_calls.append(ToolCall(id=call_id, name=func_name, args=parsed_args))
+                extracted_calls.append(ToolCall(id=call_id, name=func_name, args=parsed_args))
+        except ProviderError:
+            raise
+        except Exception as err:
+            raise ProviderError(f"{self.provider.upper()} response parsing failed: {err}") from err
 
         return EngineTurnResult(
             text=text_content,
