@@ -1,4 +1,3 @@
-
 """WhatsApp channel adapter using FastAPI and Meta Cloud API webhooks."""
 
 import asyncio
@@ -51,9 +50,7 @@ class WhatsAppChannel(BaseChannel):
             "Disculpa, estamos experimentando una demora temporal con nuestro servicio. "
             "Por favor intenta nuevamente en unos momentos."
         ),
-        unsupported_media_message: str = (
-            "Por el momento solo puedo procesar mensajes de texto."
-        ),
+        unsupported_media_message: str = ("Por el momento solo puedo procesar mensajes de texto."),
         llm_timeout_seconds: float = 120.0,
         max_outbound_retries: int = 3,
         outbound_base_delay: float = 1.0,
@@ -196,9 +193,10 @@ class WhatsAppChannel(BaseChannel):
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail="Missing or malformed X-Hub-Signature-256 header",
                     )
-                expected = "sha256=" + hmac.new(
-                    self.app_secret.encode(), raw_body, hashlib.sha256
-                ).hexdigest()
+                expected = (
+                    "sha256="
+                    + hmac.new(self.app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+                )
                 if not hmac.compare_digest(sig_header.encode(), expected.encode()):
                     logger.warning("Rejected webhook: X-Hub-Signature-256 mismatch.")
                     raise HTTPException(
@@ -221,7 +219,14 @@ class WhatsAppChannel(BaseChannel):
                     detail="JSON payload must be an object",
                 )
 
-            extracted_messages = self._extract_messages(payload)
+            try:
+                extracted_messages = self._extract_messages(payload)
+            except Exception as err:
+                logger.warning(
+                    f"Unexpected error extracting WhatsApp messages: {type(err).__name__}"
+                )
+                return JSONResponse(content={"status": "ignored_or_malformed"})
+
             if not extracted_messages:
                 return JSONResponse(content={"status": "ignored_or_status_update"})
 
@@ -255,42 +260,79 @@ class WhatsAppChannel(BaseChannel):
                 }
             )
 
-
-
-    def _extract_messages(
-        self, payload: dict[str, Any]
-    ) -> list[tuple[str, str, str | None]]:
+    def _extract_messages(self, payload: dict[str, Any]) -> list[tuple[str, str, str | None]]:
         """Extract all (wamid, sender_phone, text_or_None) from a webhook payload.
 
         Handles Meta Cloud API (entry[].changes[].value.messages[]) and generic formats.
-        Returns an empty list for status-update notifications.
+        Returns an empty list for status-update notifications, reactions, and system events.
         """
         results: list[tuple[str, str, str | None]] = []
 
         # 1. Standard Meta Cloud API format
-        for entry in payload.get("entry", []):
-            for change in entry.get("changes", []):
-                for msg in change.get("value", {}).get("messages", []):
-                    wamid = msg.get("id") or f"gen_{hash(str(msg))}"
-                    sender = msg.get("from")
-                    if not sender:
+        entries = payload.get("entry")
+        if entries is not None:
+            if not isinstance(entries, list):
+                logger.warning("Malformed WhatsApp payload: 'entry' is not a list")
+            else:
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        logger.warning("Malformed WhatsApp payload: entry item is not an object")
                         continue
-                    if msg.get("type", "text") == "text":
-                        body = msg.get("text", {}).get("body")
-                        results.append((str(wamid), str(sender), str(body) if body else None))
-                    else:
-                        results.append((str(wamid), str(sender), None))
+                    changes = entry.get("changes")
+                    if not isinstance(changes, list):
+                        if changes is not None:
+                            logger.warning("Malformed WhatsApp payload: 'changes' is not a list")
+                        continue
+                    for change in changes:
+                        if not isinstance(change, dict):
+                            logger.warning(
+                                "Malformed WhatsApp payload: change item is not an object"
+                            )
+                            continue
+                        value = change.get("value")
+                        if not isinstance(value, dict):
+                            logger.warning("Malformed WhatsApp payload: 'value' is not an object")
+                            continue
+                        messages = value.get("messages")
+                        if messages is None:
+                            continue
+                        if not isinstance(messages, list):
+                            logger.warning("Malformed WhatsApp payload: 'messages' is not a list")
+                            continue
+                        for msg in messages:
+                            if not isinstance(msg, dict):
+                                logger.warning(
+                                    "Malformed WhatsApp payload: message item is not an object"
+                                )
+                                continue
+                            wamid = msg.get("id") or f"gen_{hash(str(msg))}"
+                            sender = msg.get("from")
+                            if not sender:
+                                continue
+                            msg_type = msg.get("type", "text")
+                            # Ignore reaction (including reaction removals) and system events
+                            if msg_type in ("reaction", "system"):
+                                logger.info(f"Ignoring WhatsApp {msg_type} event")
+                                continue
+                            if msg_type == "text":
+                                text_field = msg.get("text")
+                                if not isinstance(text_field, dict):
+                                    logger.warning(
+                                        "Malformed WhatsApp payload: 'text' is not an object"
+                                    )
+                                    continue
+                                body = text_field.get("body")
+                                results.append(
+                                    (str(wamid), str(sender), str(body) if body else None)
+                                )
+                            else:
+                                results.append((str(wamid), str(sender), None))
 
         # 2. Generic / Evolution API format
-        if not results:
-            sender = (
-                payload.get("phone") or payload.get("from") or payload.get("sender")
-            )
+        if not results and "entry" not in payload:
+            sender = payload.get("phone") or payload.get("from") or payload.get("sender")
             if sender:
-                wamid = (
-                    payload.get("id") or payload.get("wamid")
-                    or f"gen_{uuid.uuid4().hex}"
-                )
+                wamid = payload.get("id") or payload.get("wamid") or f"gen_{uuid.uuid4().hex}"
                 body = payload.get("message") or payload.get("text") or payload.get("body")
                 results.append((str(wamid), str(sender), str(body) if body else None))
 
@@ -325,9 +367,7 @@ class WhatsAppChannel(BaseChannel):
                 )
                 reply_text = self.fallback_message
             except Exception as err:
-                logger.exception(
-                    f"Error dispatching wamid={wamid} from {masked_phone}: {err}"
-                )
+                logger.exception(f"Error dispatching wamid={wamid} from {masked_phone}: {err}")
                 reply_text = self.fallback_message
 
             if self.access_token and self.phone_number_id:
@@ -341,9 +381,7 @@ class WhatsAppChannel(BaseChannel):
                         to_phone=sender_phone, text=self.fallback_message
                     )
                 except Exception as fb_err:
-                    logger.exception(
-                        f"Failed to deliver fallback to {masked_phone}: {fb_err}"
-                    )
+                    logger.exception(f"Failed to deliver fallback to {masked_phone}: {fb_err}")
 
     async def _send_outbound_whatsapp(self, to_phone: str, text: str) -> None:
         """Send message back to user via Meta WhatsApp Cloud API, chunking long replies."""
@@ -391,7 +429,7 @@ class WhatsAppChannel(BaseChannel):
                             if parsed_retry_after is not None:
                                 base_delay = parsed_retry_after
                             else:
-                                base_delay = self.outbound_base_delay * (2 ** retries)
+                                base_delay = self.outbound_base_delay * (2**retries)
 
                             jitter = random.uniform(0.0, 0.25 * base_delay)
                             delay = min(self.outbound_max_delay, base_delay + jitter)
@@ -439,7 +477,7 @@ class WhatsAppChannel(BaseChannel):
             # ONLY retry on connect errors (connection failed before request could be accepted by Meta)
             except (self._httpx.ConnectError, self._httpx.ConnectTimeout) as net_err:
                 if retries < self.max_outbound_retries:
-                    base_delay = self.outbound_base_delay * (2 ** retries)
+                    base_delay = self.outbound_base_delay * (2**retries)
                     jitter = random.uniform(0.0, 0.25 * base_delay)
                     delay = min(self.outbound_max_delay, base_delay + jitter)
                     logger.warning(

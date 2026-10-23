@@ -50,8 +50,12 @@ SAMPLE_PAYLOAD = {
                 {
                     "value": {
                         "messages": [
-                            {"id": "wamid.test001", "from": "5491100001111",
-                             "type": "text", "text": {"body": "Hola"}}
+                            {
+                                "id": "wamid.test001",
+                                "from": "5491100001111",
+                                "type": "text",
+                                "text": {"body": "Hola"},
+                            }
                         ]
                     }
                 }
@@ -62,6 +66,7 @@ SAMPLE_PAYLOAD = {
 
 
 # ── SEC-01: Fail-closed: no app_secret raises ValueError ──────────────────────
+
 
 def test_fail_closed_raises_without_app_secret() -> None:
     """WhatsAppChannel MUST raise ValueError when app_secret is omitted and verify_signature=True."""
@@ -81,15 +86,18 @@ def test_explicit_verify_signature_false_does_not_raise() -> None:
 
 # ── SEC-01: HMAC validation ────────────────────────────────────────────────────
 
+
 def test_valid_signature_accepted() -> None:
     """A POST with a correct HMAC-SHA256 signature is accepted (200)."""
     ch = _make_channel()
     client = TestClient(ch.app)
     body = json.dumps(SAMPLE_PAYLOAD).encode()
     sig = _sign(body, APP_SECRET)
-    resp = client.post("/webhook", content=body,
-                       headers={"Content-Type": "application/json",
-                                "X-Hub-Signature-256": sig})
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+    )
     assert resp.status_code == 200
 
 
@@ -98,8 +106,7 @@ def test_missing_signature_rejected() -> None:
     ch = _make_channel()
     client = TestClient(ch.app)
     body = json.dumps(SAMPLE_PAYLOAD).encode()
-    resp = client.post("/webhook", content=body,
-                       headers={"Content-Type": "application/json"})
+    resp = client.post("/webhook", content=body, headers={"Content-Type": "application/json"})
     assert resp.status_code == 403
 
 
@@ -108,9 +115,11 @@ def test_wrong_signature_rejected() -> None:
     ch = _make_channel()
     client = TestClient(ch.app)
     body = json.dumps(SAMPLE_PAYLOAD).encode()
-    resp = client.post("/webhook", content=body,
-                       headers={"Content-Type": "application/json",
-                                "X-Hub-Signature-256": "sha256=deadbeef"})
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": "sha256=deadbeef"},
+    )
     assert resp.status_code == 403
 
 
@@ -120,13 +129,16 @@ def test_wrong_secret_rejected() -> None:
     client = TestClient(ch.app)
     body = json.dumps(SAMPLE_PAYLOAD).encode()
     sig = _sign(body, "wrong_secret")
-    resp = client.post("/webhook", content=body,
-                       headers={"Content-Type": "application/json",
-                                "X-Hub-Signature-256": sig})
+    resp = client.post(
+        "/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+    )
     assert resp.status_code == 403
 
 
 # ── SEC-02: Constant-time GET /webhook ────────────────────────────────────────
+
 
 def test_valid_verify_token_accepted() -> None:
     """GET /webhook with correct verify_token must return 200 and the challenge."""
@@ -134,9 +146,11 @@ def test_valid_verify_token_accepted() -> None:
     client = TestClient(ch.app)
     resp = client.get(
         "/webhook",
-        params={"hub.mode": "subscribe",
-                "hub.verify_token": VERIFY_TOKEN,
-                "hub.challenge": "challenge_abc"},
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": VERIFY_TOKEN,
+            "hub.challenge": "challenge_abc",
+        },
     )
     assert resp.status_code == 200
     assert resp.text == "challenge_abc"
@@ -148,9 +162,7 @@ def test_wrong_verify_token_rejected() -> None:
     client = TestClient(ch.app)
     resp = client.get(
         "/webhook",
-        params={"hub.mode": "subscribe",
-                "hub.verify_token": "wrong_token",
-                "hub.challenge": "x"},
+        params={"hub.mode": "subscribe", "hub.verify_token": "wrong_token", "hub.challenge": "x"},
     )
     assert resp.status_code == 403
 
@@ -158,6 +170,7 @@ def test_wrong_verify_token_rejected() -> None:
 def test_no_secrets_in_logs(caplog: pytest.LogCaptureFixture) -> None:
     """Ensure credentials (app_secret, access_token) never leak into log messages."""
     import logging
+
     secret_app = "secret_app_key_sensitive_12345"
     secret_token = "secret_access_token_sensitive_67890"
 
@@ -175,7 +188,10 @@ def test_no_secrets_in_logs(caplog: pytest.LogCaptureFixture) -> None:
         client.post(
             "/webhook",
             content=b'{"object":"whatsapp_business_account"}',
-            headers={"X-Hub-Signature-256": "sha256=invalid_hash", "Content-Type": "application/json"},
+            headers={
+                "X-Hub-Signature-256": "sha256=invalid_hash",
+                "Content-Type": "application/json",
+            },
         )
 
         # Trigger invalid JSON payload (generates error log)
@@ -190,7 +206,6 @@ def test_no_secrets_in_logs(caplog: pytest.LogCaptureFixture) -> None:
     assert secret_token not in all_logs, "access_token must never be printed to logs"
 
 
-
 def test_webhook_rejects_payload_exceeding_max_body_size() -> None:
     """Ensure payloads larger than max_body_size return HTTP 413."""
     channel = WhatsAppChannel(
@@ -200,7 +215,9 @@ def test_webhook_rejects_payload_exceeding_max_body_size() -> None:
         phone_number_id="123456",
         max_body_size=1024,
     )
-    runner = Runner(starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash"))
+    runner = Runner(
+        starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash")
+    )
     channel.attach(runner)
     client = TestClient(channel.app)
 
@@ -219,25 +236,35 @@ def test_webhook_accepts_payload_within_max_body_size() -> None:
         phone_number_id="123456",
         max_body_size=1 * 1024 * 1024,
     )
-    runner = Runner(starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash"))
+    runner = Runner(
+        starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash")
+    )
     channel.attach(runner)
     client = TestClient(channel.app)
 
-    body = json.dumps({
-        "object": "whatsapp_business_account",
-        "entry": [{
-            "changes": [{
-                "value": {
-                    "messages": [{
-                        "id": "wamid_size_ok_1",
-                        "from": "5491122334455",
-                        "type": "text",
-                        "text": {"body": "hola"}
-                    }]
+    body = json.dumps(
+        {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "wamid_size_ok_1",
+                                        "from": "5491122334455",
+                                        "type": "text",
+                                        "text": {"body": "hola"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
                 }
-            }]
-        }]
-    }).encode("utf-8")
+            ],
+        }
+    ).encode("utf-8")
 
     sig = "sha256=" + hmac.new(b"test_secret", body, hashlib.sha256).hexdigest()
     resp = client.post(
@@ -252,7 +279,9 @@ def test_webhook_accepts_payload_within_max_body_size() -> None:
 def test_webhook_rejects_missing_content_length() -> None:
     """Ensure webhook rejects requests missing Content-Length header with HTTP 411."""
     channel = WhatsAppChannel(verify_token="token", app_secret="secret")
-    channel.attach(Runner(starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash")))
+    channel.attach(
+        Runner(starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash"))
+    )
     client = TestClient(channel.app)
     resp = client.post("/webhook", content=b"data", headers={"Content-Length": ""})
     assert resp.status_code == 411
@@ -262,7 +291,9 @@ def test_webhook_rejects_missing_content_length() -> None:
 def test_webhook_rejects_invalid_content_length() -> None:
     """Ensure webhook rejects requests with non-numeric Content-Length with HTTP 400."""
     channel = WhatsAppChannel(verify_token="token", app_secret="secret")
-    channel.attach(Runner(starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash")))
+    channel.attach(
+        Runner(starting_agent=Agent(name="Echo", instructions="test", model="gemini-2.5-flash"))
+    )
     client = TestClient(channel.app)
     resp = client.post("/webhook", content=b"data", headers={"Content-Length": "invalid_number"})
     assert resp.status_code == 400
@@ -404,3 +435,331 @@ def test_whatsapp_docs_and_openapi_enabled_explicitly() -> None:
     assert "paths" in resp_openapi.json()
 
 
+# ── ISSUE-121: Event type handling and anti-500 malformed payload shield ──
+
+
+def _post_signed(client: TestClient, payload: dict | str | bytes, app_secret: str = APP_SECRET):
+    if isinstance(payload, dict):
+        body = json.dumps(payload).encode()
+    elif isinstance(payload, str):
+        body = payload.encode()
+    else:
+        body = payload
+    sig = _sign(body, app_secret)
+    return client.post(
+        "/webhook",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+    )
+
+
+def test_event_type_text_processed_and_replied() -> None:
+    """Signed text messages are processed and replied to normally."""
+    ch = _make_channel()
+    sent: list[str] = []
+
+    async def capture(to_phone: str, text: str) -> None:
+        sent.append(text)
+
+    ch._send_single_outbound_whatsapp = capture
+    ch.access_token = "fake_token"
+    ch.phone_number_id = "1"
+
+    client = TestClient(ch.app)
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "id": "wamid.text1",
+                                    "from": "5491100001111",
+                                    "type": "text",
+                                    "text": {"body": "Hola"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ],
+    }
+    resp = _post_signed(client, payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+    assert resp.json()["messages_queued"] == 1
+    assert sent == ["ok"]
+
+
+def test_event_type_reaction_ignored_no_outbound() -> None:
+    """Reactions return 200 and produce no outbound message."""
+    ch = _make_channel()
+    sent: list[str] = []
+
+    async def capture(to_phone: str, text: str) -> None:
+        sent.append(text)
+
+    ch._send_single_outbound_whatsapp = capture
+    ch.access_token = "fake_token"
+    ch.phone_number_id = "1"
+
+    client = TestClient(ch.app)
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5491100000000",
+                                    "id": "wamid.R1",
+                                    "type": "reaction",
+                                    "reaction": {
+                                        "message_id": "wamid.prev",
+                                        "emoji": "\N{THUMBS UP SIGN}",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    resp = _post_signed(client, payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ignored_or_status_update"
+    assert sent == []
+
+
+def test_event_type_reaction_removal_ignored_no_outbound() -> None:
+    """Reaction removals return 200 and produce no outbound message."""
+    ch = _make_channel()
+    sent: list[str] = []
+
+    async def capture(to_phone: str, text: str) -> None:
+        sent.append(text)
+
+    ch._send_single_outbound_whatsapp = capture
+    ch.access_token = "fake_token"
+    ch.phone_number_id = "1"
+
+    client = TestClient(ch.app)
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5491100000000",
+                                    "id": "wamid.R2",
+                                    "type": "reaction",
+                                    "reaction": {
+                                        "message_id": "wamid.prev",
+                                        "emoji": "",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    resp = _post_signed(client, payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ignored_or_status_update"
+    assert sent == []
+
+
+def test_event_type_system_ignored_no_outbound() -> None:
+    """System events return 200 and produce no outbound message."""
+    ch = _make_channel()
+    sent: list[str] = []
+
+    async def capture(to_phone: str, text: str) -> None:
+        sent.append(text)
+
+    ch._send_single_outbound_whatsapp = capture
+    ch.access_token = "fake_token"
+    ch.phone_number_id = "1"
+
+    client = TestClient(ch.app)
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5491100000000",
+                                    "id": "wamid.S1",
+                                    "type": "system",
+                                    "system": {"body": "User changed their phone number"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    resp = _post_signed(client, payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ignored_or_status_update"
+    assert sent == []
+
+
+def test_event_type_image_sends_unsupported_reply() -> None:
+    """Image / media messages still receive the unsupported media message."""
+    ch = _make_channel()
+    sent: list[str] = []
+
+    async def capture(to_phone: str, text: str) -> None:
+        sent.append(text)
+
+    ch._send_single_outbound_whatsapp = capture
+    ch.access_token = "fake_token"
+    ch.phone_number_id = "1"
+
+    client = TestClient(ch.app)
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5491100000000",
+                                    "id": "wamid.I1",
+                                    "type": "image",
+                                    "image": {"id": "media123"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    resp = _post_signed(client, payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+    assert sent == [ch.unsupported_media_message]
+
+
+def test_malformed_shape_entry_is_string(caplog: pytest.LogCaptureFixture) -> None:
+    """A signed payload where 'entry' is a string returns 200 with one warning log."""
+    import logging
+
+    ch = _make_channel()
+    client = TestClient(ch.app)
+    payload = {"entry": "malformed_string"}
+
+    with caplog.at_level(logging.WARNING, logger="chatflow_agent.whatsapp"):
+        resp = _post_signed(client, payload)
+
+    assert resp.status_code == 200
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "Malformed WhatsApp payload: 'entry' is not a list" in warnings[0].message
+    assert "malformed_string" not in caplog.text
+
+
+def test_malformed_shape_value_is_null(caplog: pytest.LogCaptureFixture) -> None:
+    """A signed payload where 'value' is null returns 200 with one warning log."""
+    import logging
+
+    ch = _make_channel()
+    client = TestClient(ch.app)
+    payload = {"entry": [{"changes": [{"value": None}]}]}
+
+    with caplog.at_level(logging.WARNING, logger="chatflow_agent.whatsapp"):
+        resp = _post_signed(client, payload)
+
+    assert resp.status_code == 200
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "Malformed WhatsApp payload: 'value' is not an object" in warnings[0].message
+
+
+def test_malformed_shape_changes_item_is_string(caplog: pytest.LogCaptureFixture) -> None:
+    """A signed payload where a 'changes' item is a string returns 200 with one warning log."""
+    import logging
+
+    ch = _make_channel()
+    client = TestClient(ch.app)
+    payload = {"entry": [{"changes": ["malformed_change_str"]}]}
+
+    with caplog.at_level(logging.WARNING, logger="chatflow_agent.whatsapp"):
+        resp = _post_signed(client, payload)
+
+    assert resp.status_code == 200
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "Malformed WhatsApp payload: change item is not an object" in warnings[0].message
+    assert "malformed_change_str" not in caplog.text
+
+
+def test_malformed_shape_messages_item_is_string(caplog: pytest.LogCaptureFixture) -> None:
+    """A signed payload where a 'messages' item is a string returns 200 with one warning log."""
+    import logging
+
+    ch = _make_channel()
+    client = TestClient(ch.app)
+    payload = {"entry": [{"changes": [{"value": {"messages": ["malformed_msg_str"]}}]}]}
+
+    with caplog.at_level(logging.WARNING, logger="chatflow_agent.whatsapp"):
+        resp = _post_signed(client, payload)
+
+    assert resp.status_code == 200
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "Malformed WhatsApp payload: message item is not an object" in warnings[0].message
+    assert "malformed_msg_str" not in caplog.text
+
+
+def test_malformed_shape_text_is_string(caplog: pytest.LogCaptureFixture) -> None:
+    """A signed payload where 'text' is a string returns 200 with one warning log and no PII."""
+    import logging
+
+    ch = _make_channel()
+    client = TestClient(ch.app)
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "id": "wamid.bad_text",
+                                    "from": "5491100001111",
+                                    "type": "text",
+                                    "text": "unexpected_raw_text_string",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="chatflow_agent.whatsapp"):
+        resp = _post_signed(client, payload)
+
+    assert resp.status_code == 200
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "Malformed WhatsApp payload: 'text' is not an object" in warnings[0].message
+    assert "5491100001111" not in caplog.text
+    assert "unexpected_raw_text_string" not in caplog.text
